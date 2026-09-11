@@ -87,13 +87,41 @@ enum LyricsParser {
         return output.sorted(by: { left, right in left.0 < right.0 })
     }
 
+    /// Convert verbatim timings into the line-based lyrics used by the TV UI.
+    static func parseYRC(_ yrc: String) -> [(time: TimeInterval, text: String)] {
+        let linePattern = try! NSRegularExpression(pattern: #"^\[(\d+),\d+\]"#)
+        let wordPattern = try! NSRegularExpression(pattern: #"\(\d+,\d+,\d+\)"#)
+        var lines: [(time: TimeInterval, text: String)] = []
+        for raw in yrc.components(separatedBy: .newlines) {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            let range = NSRange(line.startIndex..., in: line)
+            guard let head = linePattern.firstMatch(in: line, range: range),
+                  let timeRange = Range(head.range(at: 1), in: line),
+                  let milliseconds = Double(line[timeRange]),
+                  let headRange = Range(head.range, in: line) else { continue }
+            let content = String(line[headRange.upperBound...])
+            let contentRange = NSRange(content.startIndex..., in: content)
+            guard wordPattern.firstMatch(in: content, range: contentRange) != nil else { continue }
+            let text = wordPattern.stringByReplacingMatches(
+                in: content, range: contentRange, withTemplate: ""
+            ).trimmingCharacters(in: .whitespaces)
+            if !text.isEmpty { lines.append((milliseconds / 1_000, text)) }
+        }
+        return lines.sorted { $0.time < $1.time }
+    }
+
+    static func hasUsableLyrics(_ response: LyricResponse) -> Bool {
+        parseLRC(response.lrc?.lyric ?? "").contains { !$0.text.isEmpty }
+            || !parseYRC(response.yrc?.lyric ?? "").isEmpty
+    }
+
     static func parse(_ response: LyricResponse) -> ParsedLyrics {
         var output = ParsedLyrics()
         output.contributor = response.lyricUser?.nickname
         output.translationContributor = response.transUser?.nickname
 
-        guard let raw = response.lrc?.lyric, !raw.isEmpty else { return output }
-        var primary = parseLRC(raw)
+        let verbatim = parseYRC(response.yrc?.lyric ?? "")
+        var primary = verbatim.isEmpty ? parseLRC(response.lrc?.lyric ?? "") : verbatim
         let instrumentalMarker = "纯音乐，请欣赏"
         if primary.count <= 10, primary.contains(where: { $0.text.contains(instrumentalMarker) }) {
             output.isInstrumental = true
@@ -109,17 +137,22 @@ enum LyricsParser {
 
         func merge(_ body: String?, keyPath: WritableKeyPath<LyricLine, String?>) {
             guard let body, !body.isEmpty else { return }
-            var indexed: [Int: String] = [:]
-            for (time, text) in parseLRC(body) where !text.isEmpty {
-                indexed[Int((time * 100).rounded())] = text
-            }
+            let secondary = parseLRC(body).filter { !$0.text.isEmpty }
             for index in lines.indices {
-                lines[index][keyPath: keyPath] = indexed[Int((lines[index].time * 100).rounded())]
+                let time = lines[index].time
+                if let nearest = secondary.min(by: { abs($0.time - time) < abs($1.time - time) }),
+                   abs(nearest.time - time) < 0.3 {
+                    lines[index][keyPath: keyPath] = nearest.text
+                }
             }
         }
 
         merge(response.tlyric?.lyric, keyPath: \.translation)
         merge(response.romalrc?.lyric, keyPath: \.romaji)
+        if !verbatim.isEmpty {
+            merge(response.ytlrc?.lyric, keyPath: \.translation)
+            merge(response.yromalrc?.lyric, keyPath: \.romaji)
+        }
         output.lines = lines
             .filter { !isCreditLine($0.text) }
             .enumerated()

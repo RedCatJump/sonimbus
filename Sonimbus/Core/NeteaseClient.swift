@@ -183,7 +183,11 @@ final class NeteaseClient: @unchecked Sendable {
         return try await perform(request)
     }
 
-    func eapi(_ path: String, _ payload: [String: Any] = [:]) async throws -> Data {
+    func eapi(
+        _ path: String,
+        _ payload: [String: Any] = [:],
+        cookieOverrides: [String: String] = [:]
+    ) async throws -> Data {
         let apiPath = "/api" + path
         var body = payload
         var header: [String: String] = [
@@ -200,6 +204,8 @@ final class NeteaseClient: @unchecked Sendable {
         ]
         if let musicU = cookie(named: "MUSIC_U") { header["MUSIC_U"] = musicU }
         if let csrf = cookie(named: "__csrf") { header["__csrf"] = csrf }
+        if let nmtid = cookie(named: "NMTID"), !nmtid.isEmpty { header["NMTID"] = nmtid }
+        header.merge(cookieOverrides) { _, override in override }
         body["header"] = header
 
         let json = try JSONSerialization.data(withJSONObject: body)
@@ -208,7 +214,7 @@ final class NeteaseClient: @unchecked Sendable {
             throw NeteaseAPIError.invalidResponse
         }
         var request = URLRequest(url: url)
-        prepare(&request)
+        prepare(&request, cookieOverrides: cookieOverrides)
         request.httpBody = Self.encodeForm(encrypted)
         return try await perform(request)
     }
@@ -242,12 +248,12 @@ final class NeteaseClient: @unchecked Sendable {
         }
     }
 
-    private func prepare(_ request: inout URLRequest) {
+    private func prepare(_ request: inout URLRequest, cookieOverrides: [String: String] = [:]) {
         request.httpMethod = "POST"
         request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("https://music.163.com", forHTTPHeaderField: "Referer")
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        request.setValue(cookieHeader(extra: ["os": "pc", "appver": "3.1.17"]), forHTTPHeaderField: "Cookie")
+        request.setValue(cookieHeader(extra: ["os": "pc", "appver": "3.1.17"], overrides: cookieOverrides), forHTTPHeaderField: "Cookie")
     }
 
     private func perform(_ request: URLRequest) async throws -> Data {
@@ -272,11 +278,19 @@ final class NeteaseClient: @unchecked Sendable {
         return cookieGeneration
     }
 
-    private func cookieHeader(extra: [String: String]) -> String {
+    private func cookieHeader(extra: [String: String], overrides: [String: String]) -> String {
         cookieLock.lock()
-        var values = cookies
+        let snapshot = cookies
         cookieLock.unlock()
+        return Self.cookieHeader(cookies: snapshot, extra: extra, overrides: overrides)
+    }
+
+    static func cookieHeader(
+        cookies: [String: String], extra: [String: String], overrides: [String: String]
+    ) -> String {
+        var values = cookies
         for (key, value) in extra where values[key] == nil { values[key] = value }
+        values.merge(overrides) { _, override in override }
         return values.sorted { $0.key < $1.key }
             .map { "\($0.key)=\($0.value)" }
             .joined(separator: "; ")

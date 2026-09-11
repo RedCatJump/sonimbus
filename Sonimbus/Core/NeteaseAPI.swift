@@ -427,7 +427,15 @@ enum NeteaseAPI {
     }
 
     static func lyrics(id: Int) async throws -> LyricResponse {
-        try await weapi(
+        if let response = try? await weapi(
+            LyricResponse.self,
+            "/song/lyric/v1",
+            ["id": id, "cp": false, "lv": 0, "kv": 0, "tv": 0, "rv": 0,
+             "yv": 0, "ytv": 0, "yrv": 0]
+        ), LyricsParser.hasUsableLyrics(response) {
+            return response
+        }
+        return try await weapi(
             LyricResponse.self,
             "/song/lyric",
             ["id": id, "lv": -1, "kv": -1, "tv": -1, "rv": -1]
@@ -795,23 +803,35 @@ enum NeteaseAPI {
         )
     }
 
+    static func scrobbleStart(trackID: Int, sourceID: Int) async {
+        await sendWeblog(playbackLog(trackID: trackID, sourceID: sourceID, seconds: nil))
+    }
+
     static func scrobble(trackID: Int, sourceID: Int, seconds: Int) async {
-        let log: [[String: Any]] = [[
-            "action": "play",
-            "json": [
-                "download": 0,
-                "end": "playend",
-                "id": trackID,
-                "sourceId": String(sourceID),
-                "time": seconds,
-                "type": "song",
-                "wifi": 0,
-                "source": "list",
-            ],
-        ]]
+        await sendWeblog(playbackLog(trackID: trackID, sourceID: sourceID, seconds: seconds))
+    }
+
+    // startplay updates recent plays; play updates listening counts and time.
+    static func playbackLog(trackID: Int, sourceID: Int, seconds: Int?) -> [[String: Any]] {
+        var body: [String: Any] = [
+            "id": trackID, "type": "song", "mainsite": "1", "mainsiteWeb": "1",
+            "content": "id=\(sourceID)",
+        ]
+        if let seconds {
+            body.merge([
+                "download": 0, "end": "playend", "sourceId": String(sourceID),
+                "time": seconds, "wifi": 0, "source": "list",
+            ]) { _, value in value }
+        }
+        return [["action": seconds == nil ? "startplay" : "play", "json": body]]
+    }
+
+    private static func sendWeblog(_ log: [[String: Any]]) async {
         guard let data = try? JSONSerialization.data(withJSONObject: log),
               let logs = String(data: data, encoding: .utf8) else { return }
-        _ = try? await client.weapi("/feedback/weblog", ["logs": logs])
+        _ = try? await client.eapi(
+            "/feedback/weblog", ["logs": logs], cookieOverrides: ["os": "osx"]
+        )
     }
 }
 

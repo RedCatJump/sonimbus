@@ -50,3 +50,18 @@ func liveAPISmokeTest() async throws {
     #expect(mvStream.streamURL != nil)
     #expect(try await NeteaseAPI.search(mv.name, type: .mvs, limit: 1).mvs != nil)
 }
+
+@Test("新版歌词接口可直接返回可解析内容")
+func liveLyricV1SmokeTest() async throws {
+    guard ProcessInfo.processInfo.environment["NETEASE_API_SMOKE"] == "1" else { return }
+    let data = try await NeteaseClient.shared.weapi(
+        "/song/lyric/v1",
+        ["id": 186016, "cp": false, "lv": 0, "kv": 0, "tv": 0, "rv": 0,
+         "yv": 0, "ytv": 0, "yrv": 0]
+    )
+    let response = try NeteaseClient.shared.decoded(LyricResponse.self, from: data)
+    #expect(LyricsParser.hasUsableLyrics(response))
+    let lyrics = LyricsParser.parse(response)
+    #expect(!lyrics.isEmpty)
+    #expect(lyrics.lines.map(\.time) == lyrics.lines.map(\.time).sorted())
+}

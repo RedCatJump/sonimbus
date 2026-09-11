@@ -555,6 +555,9 @@ struct LyricResponse: Decodable {
     let lrc: Body?
     let tlyric: Body?
     let romalrc: Body?
+    var yrc: Body? = nil
+    var ytlrc: Body? = nil
+    var yromalrc: Body? = nil
     let lyricUser: LyricContributor?
     let transUser: LyricContributor?
 }

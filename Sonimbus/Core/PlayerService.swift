@@ -119,6 +119,7 @@ final class PlayerService {
     private var fmUpcoming: [Track] = []
     private var fmPrefetchTask: Task<Void, Never>?
     private var scrobbled = false
+    private var startScrobbled = false
     private var consecutiveFailures = 0
     private var wasPlayingBeforeInterruption = false
     private var isResolvingURL = false {
@@ -165,6 +166,12 @@ final class PlayerService {
             Task { @MainActor in
                 guard let self, !self.isScrubbing, time.seconds.isFinite else { return }
                 self.progress = max(0, time.seconds)
+                if self.engine.timeControlStatus == .playing,
+                   !self.startScrobbled, let track = self.currentTrack {
+                    self.startScrobbled = true
+                    let sourceID = self.source.sourceID
+                    Task { await NeteaseAPI.scrobbleStart(trackID: track.id, sourceID: sourceID) }
+                }
                 self.updateNowPlayingProgress()
                 let threshold = min(30, max(5, self.duration / 2))
                 if !self.scrobbled, self.progress >= threshold {
@@ -345,6 +352,7 @@ final class PlayerService {
         isResolvingURL = false
         didReachEnd = false
         scrobbled = false
+        startScrobbled = false
         consecutiveFailures = 0
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
         updateRemoteCommandAvailability()
@@ -646,6 +654,7 @@ final class PlayerService {
         attemptedAlternativeSources.removeAll()
         didReachEnd = false
         scrobbled = false
+        startScrobbled = false
         isPlaying = false
         isResolvingURL = true
         isBuffering = true
@@ -880,6 +889,7 @@ final class PlayerService {
         scrobbleIfNeeded(completed: true)
         if repeatMode == .one, source != .personalFM {
             scrobbled = false
+            startScrobbled = false
             seek(to: 0)
             engine.play()
             isPlaying = true

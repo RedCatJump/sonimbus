@@ -107,3 +107,36 @@ func recognizesInstrumentalLyrics() {
     #expect(lyrics.isInstrumental)
     #expect(lyrics.lines.isEmpty)
 }
+
+@Test("新版歌词支持仅 YRC、乱序时间和正文括号")
+func parsesVerbatimOnlyLyrics() throws {
+    let data = Data(#"{"yrc":{"lyric":"{\"t\":0}\n[5000,1000](5000,1000,0)第二句\n[1230,2000](1230,500,0)Hello (世界)(1730,500,0)!"},"ytlrc":{"lyric":"[00:01.25]你好\n[00:05.00]第二行"},"yromalrc":{"lyric":"[00:01.23]hello"}}"#.utf8)
+    let response = try JSONDecoder().decode(LyricResponse.self, from: data)
+    let parsed = LyricsParser.parse(response)
+    #expect(LyricsParser.hasUsableLyrics(response))
+    #expect(parsed.lines.map(\.time) == [1.23, 5])
+    #expect(parsed.lines.map(\.text) == ["Hello (世界)!", "第二句"])
+    #expect(parsed.lines.map(\.translation) == ["你好", "第二行"])
+    #expect(parsed.lines.first?.romaji == "hello")
+    #expect(parsed.activeIndex(at: 2) == 0)
+}
+
+@Test("无效新版歌词可回退，空新版翻译保留旧翻译")
+func fallsBackFromUnusableVerbatimLyrics() throws {
+    let invalid = try JSONDecoder().decode(LyricResponse.self, from: Data(
+        #"{"lrc":{"lyric":"[ar:metadata]"},"yrc":{"lyric":"[1000,1000]invalid"}}"#.utf8
+    ))
+    #expect(!LyricsParser.hasUsableLyrics(invalid))
+    var response = LyricResponse(
+        lrc: .init(lyric: "[00:01.00]第一句"),
+        tlyric: .init(lyric: "[00:01.00]First line"), romalrc: nil,
+        lyricUser: nil, transUser: nil
+    )
+    response.yrc = .init(lyric: "invalid")
+    #expect(LyricsParser.parse(response).lines.first?.text == "第一句")
+    response.yrc = .init(lyric: "[1020,1000](1020,1000,0)第一句")
+    response.ytlrc = .init(lyric: "")
+    #expect(LyricsParser.parse(response).lines.first?.translation == "First line")
+    response.ytlrc = .init(lyric: "[00:03.00]Unrelated line")
+    #expect(LyricsParser.parse(response).lines.first?.translation == "First line")
+}
